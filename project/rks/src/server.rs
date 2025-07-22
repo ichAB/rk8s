@@ -1,10 +1,6 @@
 use crate::api::xlinestore::XlineStore;
-<<<<<<< HEAD
 use crate::commands::{create, delete};
 use crate::protocol::{PodTask, RksMessage};
-=======
-use crate::protocol::{PodTask, RksMessage, RksResponse};
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
 use anyhow::Result;
 use quinn::{Connection, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
@@ -67,10 +63,7 @@ async fn watch_pods(
     };
 
     // send all existing pods assigned to this node
-<<<<<<< HEAD
     // used for re-connection
-=======
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
     let pods = xline_store.list_pods().await?;
     for pod_name in pods {
         if let Ok(Some(pod_yaml)) = xline_store.get_pod_yaml(&pod_name).await {
@@ -81,10 +74,7 @@ async fn watch_pods(
                 let data = bincode::serialize(&msg)?;
                 if let Ok(mut stream) = conn.open_uni().await {
                     stream.write_all(&data).await?;
-<<<<<<< HEAD
                     stream.finish()?;
-=======
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
                     println!(
                         "[watch_pods] send CreatePod for pod: {} to node: {}",
                         pod_task.metadata.name, node_id
@@ -95,7 +85,6 @@ async fn watch_pods(
     }
 
     // continue watching for new broadcasted pod messages
-<<<<<<< HEAD
     // every worker has a receiver
     // the logic below decides whether rksmessage should be dispatched to worker
     while let Ok(msg) = rx.recv().await {
@@ -105,38 +94,6 @@ async fn watch_pods(
             }
             RksMessage::DeletePod(pod_name) => {
                 delete::watch_delete(pod_name, conn, xline_store, &node_id).await?;
-=======
-    while let Ok(msg) = rx.recv().await {
-        match msg {
-            RksMessage::CreatePod(ref pod_task) => {
-                if pod_task.nodename == node_id {
-                    let data = bincode::serialize(&msg)?;
-                    if let Ok(mut stream) = conn.open_uni().await {
-                        stream.write_all(&data).await?;
-                        println!(
-                            "[watch_pods] send CreatePod for pod: {} to node: {}",
-                            pod_task.metadata.name, node_id
-                        );
-                    }
-                }
-            }
-            RksMessage::DeletePod(ref pod_name) => {
-                if let Ok(pods) = xline_store.list_pods().await {
-                    for p in pods {
-                        if let Ok(Some(pod_yaml)) = xline_store.get_pod_yaml(&p).await {
-                            let pod_task: PodTask = serde_yaml::from_str(&pod_yaml)
-                                .map_err(|e| anyhow::anyhow!("Failed to parse pod_yaml: {}", e))?;
-                            if pod_task.nodename == node_id && pod_task.metadata.name == *pod_name {
-                                let data = bincode::serialize(&msg)?;
-                                if let Ok(mut stream) = conn.open_uni().await {
-                                    stream.write_all(&data).await?;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
             }
             _ => {}
         }
@@ -159,11 +116,7 @@ async fn handle_connection(
     let mut node_id = None;
 
     // initial handshake to classify connection (RegisterNode or UserRequest)
-<<<<<<< HEAD
     if let Ok(mut recv) = conn.accept_uni().await {
-=======
-    if let Ok((_, mut recv)) = conn.accept_bi().await {
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
         match recv.read(&mut buf).await {
             Ok(Some(n)) => {
                 println!("[server] received raw data: {:?}", &buf[..n]);
@@ -176,18 +129,11 @@ async fn handle_connection(
                             xline_store.insert_node_info(&id, &ip, "Ready").await?;
                             println!("[server] registered worker node: {}, ip: {}", id, ip);
 
-<<<<<<< HEAD
                             let response = RksMessage::Ack;
                             let data = bincode::serialize(&response)?;
                             if let Ok(mut stream) = conn.open_uni().await {
                                 stream.write_all(&data).await?;
                                 stream.finish()?;
-=======
-                            let response = RksResponse::Ack;
-                            let data = bincode::serialize(&response)?;
-                            if let Ok(mut stream) = conn.open_uni().await {
-                                stream.write_all(&data).await?;
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
                             }
                         }
                         RksMessage::UserRequest(_) => {
@@ -218,17 +164,10 @@ async fn handle_connection(
         });
     }
 
-<<<<<<< HEAD
     // Main loop: accept uni-directional streams for ongoing communication
     loop {
         match conn.accept_uni().await {
             Ok(mut recv_stream) => {
-=======
-    // Main loop: accept bi-directional streams for ongoing communication
-    loop {
-        match conn.accept_bi().await {
-            Ok((_, mut recv_stream)) => {
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
                 println!("[server] stream accepted: {}", recv_stream.id());
                 let xline_store = xline_store.clone();
                 let tx = tx.clone();
@@ -238,20 +177,9 @@ async fn handle_connection(
                     Ok(Some(n)) => {
                         if let Ok(msg) = bincode::deserialize::<RksMessage>(&buf[..n]) {
                             if is_worker {
-<<<<<<< HEAD
                                 let _ = dispatch_worker(msg.clone(), &conn).await;
                             } else {
                                 let _ = dispatch_user(msg.clone(), &xline_store, &conn, &tx).await;
-=======
-                                let _ = dispatch_worker(msg.clone(), &xline_store, &conn).await;
-                            } else {
-                                dispatch_user(msg.clone(), &xline_store, &conn).await;
-                            }
-
-                            // Broadcast message to other watchers
-                            if let Err(e) = tx.send(msg) {
-                                eprintln!("Failed to broadcast message: {}", e);
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
                             }
                         }
                     }
@@ -269,7 +197,6 @@ async fn handle_connection(
     Ok(())
 }
 
-<<<<<<< HEAD
 /// acknowledges response from worker node
 async fn dispatch_worker(msg: RksMessage, conn: &Connection) -> Result<()> {
     match msg {
@@ -295,45 +222,11 @@ async fn dispatch_worker(msg: RksMessage, conn: &Connection) -> Result<()> {
             println!("[worker dispatch] unknown or unexpected message from worker");
         }
     }
-=======
-/// acknowledges Create/Delete pod requests.
-async fn dispatch_worker(
-    msg: RksMessage,
-    _xline_store: &Arc<XlineStore>,
-    conn: &Connection,
-) -> Result<()> {
-    match msg {
-        RksMessage::CreatePod(pod_task) => {
-            println!(
-                "[worker dispatch] creating pod: {}, node: {}",
-                pod_task.metadata.name, pod_task.nodename
-            );
-            let response = RksResponse::Ack;
-            let data = bincode::serialize(&response)?;
-            if let Ok(mut stream) = conn.open_uni().await {
-                stream.write_all(&data).await?;
-            }
-        }
-        RksMessage::DeletePod(pod_name) => {
-            println!("[worker dispatch] deleting pod: {}", pod_name);
-            let response = RksResponse::Ack;
-            let data = bincode::serialize(&response)?;
-            if let Ok(mut stream) = conn.open_uni().await {
-                stream.write_all(&data).await?;
-            }
-        }
-        _ => {
-            println!("[worker dispatch] unknown message");
-        }
-    }
-
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
     Ok(())
 }
 
 /// handle user-side commands like creating or deleting pods,
 /// or querying cluster info like node count.
-<<<<<<< HEAD
 pub async fn dispatch_user(
     msg: RksMessage,
     xline_store: &Arc<XlineStore>,
@@ -366,65 +259,6 @@ pub async fn dispatch_user(
     }
 
     Ok(())
-=======
-async fn dispatch_user(msg: RksMessage, xline_store: &Arc<XlineStore>, conn: &Connection) {
-    match msg {
-        RksMessage::CreatePod(mut pod_task) => {
-            if let Ok(nodes) = xline_store.list_nodes().await {
-                if let Some((node_name, _)) = nodes.first() {
-                    pod_task.nodename = node_name.clone();
-                    let pod_yaml = match serde_yaml::to_string(&pod_task) {
-                        Ok(yaml) => yaml,
-                        Err(e) => {
-                            eprintln!("[user dispatch] Failed to serialize pod task: {}", e);
-                            let response =
-                                RksResponse::Error(format!("Serialization error: {}", e));
-                            let data = bincode::serialize(&response).unwrap_or_else(|_| vec![]);
-                            if let Ok(mut stream) = conn.open_uni().await {
-                                let _ = stream.write_all(&data).await;
-                            }
-                            return;
-                        }
-                    };
-
-                    xline_store
-                        .insert_pod_yaml(&pod_task.metadata.name, &pod_yaml)
-                        .await
-                        .unwrap();
-                    println!(
-                        "[user dispatch] created pod: {}, assigned to node: {}",
-                        pod_task.metadata.name, node_name
-                    );
-
-                    let response = RksResponse::Ack;
-                    let data = bincode::serialize(&response).unwrap();
-                    if let Ok(mut stream) = conn.open_uni().await {
-                        stream.write_all(&data).await.unwrap();
-                    }
-                }
-            }
-        }
-        RksMessage::DeletePod(pod_name) => {
-            let _ = xline_store.delete_pod(&pod_name).await;
-            println!("[user dispatch] deleted pod: {}", pod_name);
-            let response = RksResponse::Ack;
-            let data = bincode::serialize(&response).unwrap();
-            if let Ok(mut stream) = conn.open_uni().await {
-                stream.write_all(&data).await.unwrap();
-            }
-        }
-        RksMessage::GetNodeCount => {
-            let count = xline_store.list_nodes().await.unwrap().len();
-            println!("[user dispatch] node count: {}", count);
-            let response = RksResponse::NodeCount(count);
-            let data = bincode::serialize(&response).unwrap();
-            if let Ok(mut stream) = conn.open_uni().await {
-                stream.write_all(&data).await.unwrap();
-            }
-        }
-        _ => println!("[user dispatch] unknown message"),
-    }
->>>>>>> ebe960bb4d3aae5647fa92a03e3a7d08957431ef
 }
 
 /// set up the QUIC server endpoint with TLS certificate.
