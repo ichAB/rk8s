@@ -41,18 +41,29 @@ pub struct PushArgs {
 }
 
 pub fn push(args: PushArgs) -> anyhow::Result<()> {
+    let path = args.path.unwrap_or(".".to_string());
+    push_from_layout(args.image_ref, path, args.url)
+}
+
+pub fn push_from_layout(
+    image_ref: impl Into<String>,
+    path: impl AsRef<Path>,
+    url: Option<String>,
+) -> anyhow::Result<()> {
+    let image_ref = image_ref.into();
+    let path = path.as_ref().to_path_buf();
     let auth_config = AuthConfig::load()?;
-    let requested_has_explicit_tag = has_explicit_tag(&args.image_ref);
+    let requested_has_explicit_tag = has_explicit_tag(&image_ref);
+    let parsed_input_ref = image_ref
+        .parse::<Reference>()
+        .with_context(|| format!("invalid image reference for push: {}", image_ref.as_str()))?;
+    let requested_repo = parsed_input_ref.repository().to_string();
 
-    let requested_ref = args.image_ref.parse::<Reference>().with_context(|| {
-        format!(
-            "invalid image reference for push: {}",
-            args.image_ref.as_str()
-        )
-    })?;
-    let requested_repo = requested_ref.repository().to_string();
-
-    let url = auth_config.resolve_url(args.url);
+    let url = match url {
+        Some(url) => auth_config.resolve_url(Some(url)),
+        None if has_explicit_registry(&image_ref) => parsed_input_ref.registry().to_string(),
+        None => auth_config.resolve_url(None::<String>),
+    };
 
     let auth_method = auth_config
         .find_entry_by_url(&url)
@@ -65,8 +76,12 @@ pub fn push(args: PushArgs) -> anyhow::Result<()> {
     };
     let client = Client::new(client_config);
 
-    let image_ref = parse_image_ref(url, args.image_ref, None::<String>)?;
-    let path = args.path.unwrap_or(".".to_string());
+    let normalized_image_ref = if let Some(tag) = parsed_input_ref.tag() {
+        format!("{requested_repo}:{}", tag)
+    } else {
+        requested_repo.clone()
+    };
+    let image_ref = parse_image_ref(url, normalized_image_ref, None::<String>)?;
     let registry_url = image_ref.registry().to_string();
 
     block_on(async move {
@@ -74,7 +89,7 @@ pub fn push(args: PushArgs) -> anyhow::Result<()> {
             &client,
             &image_ref,
             &auth_method,
-            path,
+            &path,
             &registry_url,
             &requested_repo,
             requested_has_explicit_tag,
@@ -206,8 +221,9 @@ fn should_include_digest(requested_tag: Option<&str>, ref_names: &[String]) -> b
 }
 
 fn has_explicit_tag(raw: &str) -> bool {
-    let last_colon = raw.rfind(':');
-    let last_slash = raw.rfind('/');
+    let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
+    let last_colon = raw_without_digest.rfind(':');
+    let last_slash = raw_without_digest.rfind('/');
     match (last_colon, last_slash) {
         (Some(colon), Some(slash)) => colon > slash,
         (Some(_), None) => true,
@@ -215,9 +231,41 @@ fn has_explicit_tag(raw: &str) -> bool {
     }
 }
 
+fn has_explicit_registry(raw: &str) -> bool {
+    let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
+    let raw_without_tag = if has_explicit_tag(raw_without_digest) {
+        match raw_without_digest.rfind(':') {
+            Some(idx) => &raw_without_digest[..idx],
+            None => raw_without_digest,
+        }
+    } else {
+        raw_without_digest
+    };
+
+    let Some((first, _rest)) = raw_without_tag.split_once('/') else {
+        return false;
+    };
+
+    first == "localhost" || first.contains('.') || first.contains(':')
+}
+
+fn strip_explicit_tag(raw: &str) -> &str {
+    let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
+    if has_explicit_tag(raw)
+        && let Some(idx) = raw_without_digest.rfind(':')
+    {
+        return &raw_without_digest[..idx];
+    }
+    raw_without_digest
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{has_explicit_tag, should_include_digest};
+    use crate::storage::parse_image_ref;
+
+    use super::{
+        has_explicit_registry, has_explicit_tag, should_include_digest, strip_explicit_tag,
+    };
 
     #[test]
     fn test_should_include_digest_for_explicit_tag() {
@@ -238,5 +286,52 @@ mod tests {
         assert!(!has_explicit_tag("localhost:5000/repo/app"));
         assert!(has_explicit_tag("repo/app:v1"));
         assert!(has_explicit_tag("localhost:5000/repo/app:v1"));
+        assert!(!has_explicit_tag("repo/app@sha256:1234"));
+        assert!(has_explicit_tag("repo/app:v1@sha256:1234"));
+    }
+
+    #[test]
+    fn test_has_explicit_registry() {
+        assert!(!has_explicit_registry("repo/app"));
+        assert!(has_explicit_registry("my.ns/team/app"));
+        assert!(!has_explicit_registry("repo/app:v1"));
+        assert!(has_explicit_registry("ghcr.io/acme/app"));
+        assert!(has_explicit_registry("ghcr.io/acme/app:v1"));
+        assert!(has_explicit_registry("localhost:5000/acme/app:v1"));
+        assert!(has_explicit_registry("ghcr.io/acme/app@sha256:1234"));
+    }
+
+    #[test]
+    fn test_strip_explicit_tag() {
+        assert_eq!(strip_explicit_tag("repo/app"), "repo/app");
+        assert_eq!(strip_explicit_tag("my.ns/team/app"), "my.ns/team/app");
+        assert_eq!(
+            strip_explicit_tag("localhost:5000/repo/app"),
+            "localhost:5000/repo/app"
+        );
+        assert_eq!(strip_explicit_tag("repo/app:v1"), "repo/app");
+        assert_eq!(
+            strip_explicit_tag("localhost:5000/repo/app:v1"),
+            "localhost:5000/repo/app"
+        );
+        assert_eq!(strip_explicit_tag("repo/app@sha256:1234"), "repo/app");
+        assert_eq!(strip_explicit_tag("repo/app:v1@sha256:1234"), "repo/app");
+    }
+
+    #[test]
+    fn test_implicit_push_repo_path_preserved() {
+        let ref_name = strip_explicit_tag("my.ns/team/app");
+        let target = parse_image_ref("127.0.0.1:8968", ref_name, Some("latest")).unwrap();
+        assert_eq!(target.repository(), "my.ns/team/app");
+    }
+
+    #[test]
+    fn test_registry_qualified_push_ref_is_not_prefixed_twice() {
+        let parsed = "ghcr.io/acme/app:v1"
+            .parse::<oci_spec::distribution::Reference>()
+            .unwrap();
+        let normalized = format!("{}:{}", parsed.repository(), parsed.tag().unwrap());
+        let target = parse_image_ref(parsed.registry(), normalized, None::<String>).unwrap();
+        assert_eq!(target.whole(), "ghcr.io/acme/app:v1");
     }
 }

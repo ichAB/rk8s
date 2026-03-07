@@ -1,6 +1,15 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::{image::config::ImageConfig, overlayfs::MountConfig};
+use crate::{
+    image::{
+        BuildProgressMode,
+        build_runtime::{
+            BuildHostEntry, BuildNetworkMode, BuildSecret, BuildSshAgent, BuildUlimit,
+        },
+        config::ImageConfig,
+    },
+    overlayfs::MountConfig,
+};
 
 /// Represents the execution context for a single build stage.
 ///
@@ -14,26 +23,17 @@ pub struct StageContext<'ctx, P: AsRef<Path>> {
     pub image_config: &'ctx mut ImageConfig,
     pub image_aliases: &'ctx mut HashMap<String, String>,
     pub args: HashMap<String, Option<String>>,
+    pub cli_build_args: &'ctx HashMap<String, String>,
     pub global_args: &'ctx HashMap<String, Option<String>>,
     pub build_context: P,
-}
-
-impl<'ctx, P: AsRef<Path>> StageContext<'ctx, P> {
-    pub fn new(
-        mount_config: &'ctx mut MountConfig,
-        image_config: &'ctx mut ImageConfig,
-        image_aliases: &'ctx mut HashMap<String, String>,
-        args: HashMap<String, Option<String>>,
-        global_args: &'ctx HashMap<String, Option<String>>,
-        build_context: P,
-    ) -> Self {
-        Self {
-            mount_config,
-            image_config,
-            image_aliases,
-            args,
-            global_args,
-            build_context,
-        }
-    }
+    pub no_cache: bool,
+    pub quiet: bool,
+    pub progress_mode: BuildProgressMode,
+    pub add_hosts: &'ctx [BuildHostEntry],
+    pub shm_size: Option<u64>,
+    pub ulimits: &'ctx [BuildUlimit],
+    pub network_mode: BuildNetworkMode,
+    pub cgroup_parent: Option<String>,
+    pub secrets: &'ctx [BuildSecret],
+    pub ssh: &'ctx [BuildSshAgent],
 }
